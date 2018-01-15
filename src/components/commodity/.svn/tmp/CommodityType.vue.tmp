@@ -1,0 +1,614 @@
+<template>
+  <div style="height:100%;position:relative;">
+    <div class="left-content">
+      <ul  class="content">
+        <li v-for="item in commodityTypeList" :key="item.dataWeight" @click="showchildMenu_id(item)">
+          <p :class="item.commodityNavigation.idCommodityNavigation === menuShow?'current':''">{{item.commodityNavigation.commodityNavigationName}}</p>
+            <ul class="childMenu_id"  :class="item.commodityNavigation.idCommodityNavigation === navigationId?'show':''">
+              <li v-for="childMenu in item.commodityChildNavitaionList" @click.stop="showchildMenu_id(childMenu)"
+                  :class="childMenu.commodityNavigation.idCommodityNavigation === liChange?'current':''"><!--在@click后加stop可以阻止冒泡，加prevent阻止默认行为-->
+                  <i></i>
+                  <span>{{childMenu.commodityNavigation.commodityNavigationName}}</span>
+              </li>
+            </ul>
+        </li>
+      </ul>
+    </div>
+
+    <div class="right-content" ref="foodSpec" >
+      <ul class="content" >
+        <li v-for="(item, index) in commodityList" :key="index">
+          <div class="goods-info">
+              <img v-bind:src="item.commodityInfo.commodityImage" alt="">
+            <button @click="goDetails(item)" class="goDetails"></button>
+            <div class="food_text">
+              <p class="title overflow">{{item.commodityInfo.commodityName}}</p>
+              <p class="min_describe">{{item.commodityInfo.saleDescribe}}起</p>
+              <p class="single_price"><span>{{item.commodityInfo.standardRetailPrice.toFixed(2)}}元</span>起</p>
+              <button class="select" @click.stop="showChooseList(item)" v-text="item.idCommodity === foodName?'收起':'选规格'">选规格</button>
+            </div>
+          </div>
+          <div class="slide" :class="item.idCommodity === foodName?'show':''">
+            <ul>
+              <li v-for="(item, index) in item.commoditySpecificationList" :key="index" class="spcList">
+                <p>
+                  <span class="specName">{{item.commoditySpecifications.saleDescribe}}/</span>
+                  <span class="spcPrice">&yen;{{item.commoditySpecifications.standardRetailPrice.toFixed(2)}}</span>
+                </p>
+                <p class="plus">
+                  <button @click="addBasket($event, item)" class="addBasket"></button>
+                  <img src="../../../static/img/add.png" alt="">
+                </p>
+              </li>
+            </ul>
+          </div>
+        </li>
+        <slot name="pullup"
+              :pullUpLoad="pullUpLoad"
+              :isPullUpLoad="isPullUpLoad"
+        >
+          <div class="pullup-wrapper" v-if="pullUpLoad">
+            <div class="before-trigger" v-if="!isPullUpLoad">
+              <span>{{pullUpTxt}}</span>
+            </div>
+            <div class="after-trigger" v-else>
+              <loading></loading>
+            </div>
+          </div>
+        </slot>
+      </ul>
+      <div class="foodNull" v-show="commodityList.length === 0">
+        <img src="../../../static/img/null.png" alt="">
+      </div>
+      <slot name="pulldown"
+            :pullDownRefresh="pullDownRefresh"
+            :pullDownStyle="pullDownStyle"
+            :beforePullDown="beforePullDown"
+            :isPullingDown="isPullingDown"
+            :bubbleY="bubbleY"
+      >
+        <div ref="pulldown" class="pulldown-wrapper" :style="pullDownStyle">
+          <div class="before-trigger" v-if="beforePullDown">
+            <bubble :y="bubbleY"></bubble>
+          </div>
+          <div class="after-trigger" v-else>
+            <div v-if="isPullingDown" class="loading">
+              <loading></loading>
+            </div>
+            <div v-show="refreshTxtShow"><span>{{refreshTxt}}</span></div>
+          </div>
+        </div>
+      </slot>
+    </div>
+    <div class="basket_icon" id="basket_icon" v-bind:style="backetIconX" @click="goBasket">
+      <img src="../../../static/img/btn_cart.png" alt="">
+      <p class="count">{{updateUnfinishOrderNumber.unfinishOrderNumber}}</p>
+    </div>
+    <transition name="zzz" @before-enter="beforeEnter" @enter="enter" @after-enter="afterEnter">
+      <div class="ball" v-show="ball.show"></div> <!--用来存放小球-->
+    </transition>
+  </div>
+</template>
+
+<script>
+import { XNumber, Cell, CellBox, CellFormPreview, Radio, Group, Drawer, ViewBox, TransferDom } from 'vux'
+import BScroll from 'better-scroll'
+import Bubble from '../common/bubble/bubble.vue'
+import Loading from '../common/loading/loading.vue'
+import { mapState } from 'vuex'
+const DIRECTION_V = 'vertical'
+
+export default {
+  name: 'commodity-type',
+  directives: {
+    TransferDom
+  },
+  components: {
+    XNumber,
+    Cell,
+    CellBox,
+    CellFormPreview,
+    Radio,
+    Group,
+    Drawer,
+    Bubble,
+    Loading,
+    ViewBox
+  },
+  data () {
+    return {
+      commodityTypeList: [], // 菜单列表
+      commodityList: [], // 商品列表
+      navigationId: '', // 暂存菜单名称
+      childMenu_id: '', // 暂存菜单id
+      liChange: '',
+      backetIconX: '', // 用来保存菜篮子位置
+      beforePullDown: true,
+      isRebounding: false,
+      isPullingDown: false,
+      isPullUpLoad: false,
+      pullUpDirty: true,
+      pullDownRefresh: true,
+      direction: DIRECTION_V,
+      scrollbar: false,
+      pullDownStyle: '',
+      pullUpLoad: true,
+      bubbleY: 0,
+      refreshTxtShow: false,
+      refreshTxt: '刷新成功',
+      pullUpTxt: '正在加载...',
+      foodName: '', // 暂存商品名字
+      menuShow: '',
+      unfinishOrderNumber: '', // 菜篮子数量
+      temObj: '', // 用来保存临时对象，以便下拉刷新时使用
+      begin: 0, // 分页起始位置
+      length: 20, // 分页长度
+      loadMore: true, // 加载更多
+      beginX: 0, // 动画起始X位置
+      beginY: 0, // 动画起始Y位置
+      endX: 0, // 结束X位置
+      endY: 0, // 结束Y位置
+      screenH: window.screen.availHeight, // 获取设备高度
+      screenW: window.screen.availWidth, // 获取设备宽度
+      canclick: true, // 保存添加菜篮子按钮是否可以点击
+      ball: { // 保存小球的状态
+        show: false, // 是否显示
+        imgSrc: '' // 小球可以更改为商品图片，根据需求以便更改
+      }
+    }
+  },
+  computed: {
+    ...mapState({
+      updateUnfinishOrderNumber: state => state
+    })
+  },
+  created () {
+    this.getCommodityNavigation()
+    this.pullDownInitTop = -50 // 下拉动画初始化位置
+  },
+  mounted () {
+    this.$nextTick(function () {
+      this.foodSpec = new BScroll(this.$refs.foodSpec, {
+        pullDownRefresh: {
+          threshold: 80, // 当下拉到超过顶部 80px 时，触发 pullingDown 事件
+          stop: 50 // 刷新数据的过程中，回弹停留在距离顶部还有 50px 的位置
+        },
+        pullUpLoad: {
+          threshold: -20
+        }
+      })
+      this._initPullDownRefresh() // 下拉刷新
+      this._initPullUpLoad() // 上拉加载更多
+    })
+    var div = document.getElementById('basket_icon')
+    div.addEventListener('touchmove', (e) => { // 菜篮子添加事件监听，以便可以拖动
+      console.log(e.touches[0].clientY)
+      this.endX = e.touches[0].clientX - 25 // 减去菜篮子图标一半的宽高，保持点击在元素的中心
+      this.endY = e.touches[0].clientY - 25
+      if (this.endX < 100) { // 判断当前所在位置，防止图标移出可视范围
+        this.endX = 80
+      }
+      if (this.endX > this.screenW - 50) {
+        this.endX = this.screenW - 50
+      }
+      if (this.endY < 50) {
+        this.endY = 50
+      }
+      if (this.endY > this.screenH - 175) {
+        this.endY = this.screenH - 175
+      }
+      this.backetIconX = 'left:' + this.endX + 'px;top:' + this.endY + 'px;' // 动态设置菜篮子位置
+    }, false)
+  },
+  methods: {
+    _initPullDownRefresh () { // 右侧商品列表下拉刷新
+      this.foodSpec.on('pullingDown', () => { // 触发刷新
+        this.beforePullDown = false // 触发刷新前隐藏掉动画
+        this.isPullingDown = true // 显示loading
+        this.begin = this.length = 0 // 初始化分页数据
+        this.$api.get('goods/commodity/getCommodity', this.temObj, (res) => {
+          this.commodityList = res // 商品列表
+          this.refreshTxtShow = true // 显示加载成功提示语言
+          this.isPullingDown = false // 关闭loading
+          this.$emit('pullingDown')
+          setTimeout(() => {
+            this.refreshTxtShow = false // 隐藏提示语言
+            this.beforePullDown = true // 显示刷新标识，以便下次使用
+            this.foodSpec.finishPullDown() // 完成刷新事件
+          }, 1000)
+        })
+      })
+      this.foodSpec.on('scroll', (pos) => { // 监听下拉滚动，执行过渡动画
+        if (this.beforePullDown) {
+          this.bubbleY = Math.max(0, pos.y + this.pullDownInitTop)
+          this.pullDownStyle = `top:${Math.min(pos.y + this.pullDownInitTop, 10)}px`
+        } else {
+          this.bubbleY = 0
+        }
+        if (this.isRebounding) {
+          this.pullDownStyle = `top:${10 - (this.pullDownRefresh.stop - pos.y)}px`
+        }
+      })
+    },
+    _initPullUpLoad () {
+      this.foodSpec.on('pullingUp', () => { // 上拉加载事件
+        if (!this.pullUpLoad) return
+        this.$api.get('goods/commodity/getCommodity', this.temObj, (res) => {
+          this.isPullUpLoad = true
+          if (res.length < 20) { // 如果数量不够，则取消分页
+            this.pullUpLoad = false
+          }
+          this.commodityList = this.commodityList.concat(res) // 商品列表拼接
+          this.foodSpec.finishPullUp() // 完成上拉事件
+          this.foodSpec.refresh() // 渲染
+          this.$emit('pullingUp')
+        })
+      })
+    },
+    goDetails (item) { // 跳转到商品详情
+      console.log('diansmdian')
+      this.$router.push({name: 'GoodsDetails', params: {id: item.idCommodity}})
+    },
+    goBasket () {
+      if (this.updateUnfinishOrderNumber.unfinishOrderNumber === 0) { // 如果菜篮子数量为0 则不允许跳转
+        this.$vux.toast.text('菜篮子为空')
+        return
+      }
+      this.$router.push({name: 'basket', params: {idOrder: -1}})
+    },
+    beforeEnter (ele) { // 钩子函数，在动画之前执行的函数
+      ele.style.transform = `translate3d(${this.beginX}px,${this.beginY + 20}px,0)`
+    },
+    enter (ele) { // 钩子函数
+      ele.style.transform = `translate3d(${this.beginX}px,${this.beginY}px,0)`
+    },
+    afterEnter (ele) { // 钩子函数，动画最后执行的函数
+      ele.style.transform = `translate3d(${this.endX + 10}px,${this.endY + 20}px,0)`
+      var basket = document.getElementsByClassName('basket_icon')[0]
+      this.ball.show = false // 隐藏小球
+      setTimeout(() => { // 添加菜篮子动画
+        this.canclick = true
+        basket.classList.add('skeit')
+      }, 200)
+      setTimeout(() => { // 删除菜篮子动画，以便下次使用
+        basket.classList.remove('skeit')
+      }, 800)
+    },
+    addBasket (event, item) {
+      if (!this.canclick) return // 如果动画正在执行中，则不允许点击
+      this.canclick = false // 设置点击状态
+      this.beginX = event.clientX - 10
+      this.beginY = event.clientY - 10
+      if (!this.backetIconX) { // 获取菜篮子图标位置，如果为空 则获取初始化位置
+        this.endX = window.screen.availWidth - 60
+        this.endY = window.screen.availHeight - 110
+      }
+      var obj = {
+        idCommoditySpecifications: item.commoditySpecifications.idCommoditySpecifications
+      }
+      this.$api.get('order/user/modifyShoppingInfoAdd', obj, (res) => {
+        this.ball.show = true
+        setTimeout(() => { // 为了与动画保持一致 延时更改菜篮子数量
+          this.updateUnfinishOrderNumber.unfinishOrderNumber = res.commodityInfo.totalNum
+        }, 500)
+      })
+    },
+    getCommodityNavigation () { // 获取首页数据
+      this.$api.get('goods/commodity/getAllCommodityNavigation', null, (res) => {
+        this.commodityTypeList = res.commodityNavigationList // 左侧菜单列表
+        this.temObj = {
+          idCommodityNavigation: this.commodityTypeList[0].commodityNavigation.idCommodityNavigation, // 父级id
+          idCommoditySecondNavigation: this.commodityTypeList[0].commodityChildNavitaionList[0].commodityNavigation.idCommodityNavigation, // 子菜单id
+          begin: this.begin,
+          length: this.length
+        }
+        this.getCommodity(this.temObj) // 获取商品列表
+      })
+    },
+    getCommodity (obj) {
+      this.$api.get('goods/commodity/getCommodity', obj, (res) => {
+        if (res.length < 20) {
+          this.pullUpLoad = false
+        }
+        this.commodityList = res
+      })
+    },
+    showChooseList (item) { // 更改规格显示状态
+      if (item.isShow) {
+        item.isShow = false
+      } else {
+        if (item.idCommodity !== this.foodName) {
+          this.foodName = item.idCommodity
+          setTimeout(() => {
+            this.foodSpec.refresh()
+          }, 500)
+        } else {
+          this.foodName = ''
+        }
+      }
+    },
+    showchildMenu_id (item) { // 左侧菜单基本交互
+      console.log(item)
+      if (item.commodityChildNavitaionList !== null) { // 如果是父级目录 切换状态
+        if (item.commodityNavigation.idCommodityNavigation !== this.navigationId) { // 如果本次点击的和上次点击的不是同一个元素
+          this.begin = this.length = 0
+          this.temObj = { // 重新保存id和分页起始数据
+            idCommodityNavigation: item.commodityNavigation.idCommodityNavigation, // 父级id
+            idCommoditySecondNavigation: item.commodityChildNavitaionList[0].commodityNavigation.idCommodityNavigation, // 子菜单id
+            begin: this.begin,
+            length: this.length
+          }
+          this.navigationId = item.commodityNavigation.idCommodityNavigation // 暂存当前点击的目录名字
+          this.liChange = item.commodityChildNavitaionList[0].commodityNavigation.idCommodityNavigation
+          this.menuShow = item.commodityNavigation.idCommodityNavigation
+          this.getCommodity(this.temObj) // 重新加载右侧商品数据
+        } else { // 否则修改为空 以便下次区分
+          this.navigationId = ''
+        }
+        if (item.commodityNavigation.idCommodityNavigation === this.childMenu_id) return // 如果本次点击的菜单id和上次点击的是同一个 则return
+        this.childMenu_id = item.commodityNavigation.idCommodityNavigation // 否则 就暂存当前点击的id
+      } else { // 如果不是父级目录
+        this.temObj = { // 重新保存id和分页起始数据
+          idCommodityNavigation: item.commodityNavigation.idNavigationParentClass, // 父级id
+          idCommoditySecondNavigation: item.commodityNavigation.idCommodityNavigation, // 子菜单id
+          begin: this.begin,
+          length: this.length
+        }
+        this.getCommodity(this.temObj) // 获取商品数据
+        this.liChange = item.commodityNavigation.idCommodityNavigation // 储存当前菜单
+      }
+    }
+  }
+}
+</script>
+
+<style scoped>
+  .basket_icon{
+    position: fixed;
+    top: calc(100% - 100px);
+    left: calc(100% - 60px);
+  }
+  .basket_icon img{
+    width:50px;
+  }
+  .basket_icon .count{
+    position: absolute;
+    top: 50%;
+    width: 100%;
+    color: #fff;
+    font-size: 12px;
+    line-height: 12px;
+    text-align: center;
+  }
+  ::-webkit-scrollbar{
+    display:none; /*隐藏滚动条*/
+  }
+  .overflow{
+    overflow: hidden;
+    text-overflow:ellipsis;
+    white-space: nowrap;
+  }
+  .food_text{
+    margin-left: 100px;
+  }
+  .pulldown-wrapper{
+    position: absolute;
+    width: 100%;
+    right: 0;
+    display: flex;
+    top: -50px;
+    justify-content: center;
+    align-items: center;
+    transition: all;
+    z-index: -999;
+  }
+  .pullup-wrapper{
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 16px 0;
+  }
+ul,li{
+  list-style: none;
+}
+.slide{
+  max-height: 0;
+  overflow: hidden;
+  background: #FBFBFB;
+  transition: max-height .8s cubic-bezier(0, 1, 0, 1) -.1s;
+}
+.show{
+  max-height: 800px !important;
+  transition-timing-function: cubic-bezier(0.2, 0, 1, 0);
+  transition-delay: 0s;
+}
+.left-content{
+  width: 21%;
+  background: #f5f5f5;
+  height: 100%;
+  overflow-y: scroll;
+}
+.left-content li{
+	line-height: 40px;
+  text-align: center;
+  background: #f5f5f5;
+  color: #a9a9a9;
+}
+.left-content li p{
+  position: relative;
+  border-bottom: solid 1px #dbd9d9;
+  border-top: 1px solid #fff;
+}
+.left-content li p.current{
+  color: #6bb93e;
+}
+.left-content li p.current:after{
+  content: "";
+  display: block;
+  position: absolute;
+  top: 0px;
+  right: 0;
+  height: calc(100% - 1px);
+  border-right: solid 3px #6bb93e;
+}
+.childMenu_id{
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height .8s cubic-bezier(0.1, 0.5, 0, 1) -.3s;
+}
+.childMenu_id.show{
+  max-height: 800px !important;
+  transition-timing-function: cubic-bezier(.83,.23,.83,.24);
+  transition-delay: 0s;
+}
+.childMenu_id li{
+  background: #f2f2f2;
+  border: none;
+  font-size: 14px;
+  color: #686868;
+}
+.childMenu_id li.current{
+  color: #6bb93e;
+}
+.right-content{
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 79%;
+  height: 100%;
+}
+.right-content .content>li{
+  position: relative;
+  font-size: 14px;
+}
+.right-content .title{
+  color: #4A4A4A;
+}
+.goods-info{
+  position: relative;
+  border-bottom: 1px solid #eee;
+  border-top: 1px solid #fff;
+  background: #fff;
+  height: 70px;
+}
+.goods-info .goDetails{
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+}
+.goods-info:after{
+  content: "";
+  display: block;
+  clear: both;
+}
+.min_describe,
+.single_price{
+  font-size: 12px;
+  color: #666;
+}
+.single_price span{
+  color: #51C332;
+  font-size: 16px;
+}
+.right-content p.title{
+  padding-top:2px;
+}
+.foodNull{
+  width: 100%;
+  height: 100%;
+  background: #fff;
+}
+.foodNull img{
+  width: 100%;
+  margin-top: 30px;
+}
+  .right-content ul.content>li .goods-info img{
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    height: 50px;
+    width: 80px;
+  }
+  .select{
+    position: absolute;
+    color: #51C332;
+    border: 1px solid #51C332;
+    background: #fff;
+    width: 50px;
+    height: 24px;
+    line-height: 24px;
+    outline: none;
+    bottom: 7px;
+    right: 10px;
+  }
+  .specs_price span:last-child{
+    color: #f74c31;
+    font-size: 18px;
+  }
+  .spcList:after{
+    content: '';
+    display: block;
+    clear: both;
+  }
+  .spcList{
+    padding: 5px 5px;
+    border-bottom: 1px dashed #f0f0f0;
+  }
+  .spcList span{
+    float: left;
+  }
+  .spcPrice{
+    color: #6bb93e;
+    padding-left: 5px;
+  }
+.plus{
+  float: right;
+  height: 23px;
+  position: relative;
+}
+.plus .addBasket{
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+}
+.plus img{
+  height: 23px;
+  width: 23px;
+  padding-right: 10px;
+  }
+  .ball{
+    width: 20px;
+    height: 20px;
+    background: #6bb93e;
+    position: fixed;
+    -webkit-border-radius: 50%;
+    -moz-border-radius: 50%;
+    border-radius: 50%;
+    left: 0;
+    top: 0;
+    z-index: 999999;
+    transition: transform .5s cubic-bezier(.22,-0.86,.97,.58) -.35s
+  }
+  .skeit{
+    animation: scaleAndSmall .5s linear;
+  }
+  @keyframes scaleAndSmall {
+    0%{
+      transform: scale(0.6);
+    }
+    33%{
+      transform: scale(1);
+    }
+    66%{
+      transform: scale(0.6);
+    }
+    100%{
+      transform: scale(1);
+    }
+  }
+</style>
+
